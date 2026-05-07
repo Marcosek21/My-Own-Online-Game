@@ -63,6 +63,11 @@ socket.on('state', (state) => {
     updateLeaderboard();
 });
 
+socket.on('error_message', (msg) => {
+    alert(msg); // Wyświetlamy komunikat użytkownikowi
+    location.reload(); // Odświeżamy stronę, aby przywrócić ekran logowania
+});
+
 function updateLeaderboard() {
     const sorted = Object.values(players).sort((a, b) => b.score - a.score).slice(0, 5);
     document.getElementById('scoresList').innerHTML = sorted.map(p => `

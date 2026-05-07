@@ -1,5 +1,7 @@
 module.exports = {
     MAP_SIZE: 2000,
+    MAX_PLAYERS: 6,
+    MAP_SIZE: 2000,
     WEAPONS: {
         pistol: { fireRate: 400, bulletSpeed: 15, damage: 20, spread: 0, count: 1, recoil: 0 },
         shotgun: { fireRate: 850, bulletSpeed: 12, damage: 15, spread: 0.3, count: 5, recoil: 8 },

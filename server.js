@@ -81,6 +81,16 @@ setInterval(() => {
 // OBSŁUGA SOCKETÓW
 io.on('connection', (socket) => {
     socket.on('join_game', (data) => {
+        // Sprawdzamy aktualną liczbę graczy w obiekcie players
+        const currentPlayersCount = Object.keys(players).length;
+
+        if (currentPlayersCount >= config.MAX_PLAYERS) {
+            // Serwer jest pełny - wysyłamy informację zwrotną do klienta
+            socket.emit('error_message', 'Serwer jest pełny! (Max 6 graczy). Spróbuj później.');
+            return; // Przerywamy funkcję, gracz nie zostaje dodany
+        }
+
+        // Jeśli jest miejsce, kontynuujemy standardowe dodawanie gracza
         const spawn = getSafeSpawn(players);
         players[socket.id] = {
             x: spawn.x, y: spawn.y,
@@ -88,6 +98,8 @@ io.on('connection', (socket) => {
             name: data.name ? data.name.substring(0, 12) : 'Bezimienny',
             hp: 100, score: 0, speedBoost: false, lastHit: 0, weapon: 'pistol', lastFired: 0
         };
+        
+        console.log(`[GRA] ${players[socket.id].name} dołączył. Graczy: ${currentPlayersCount + 1}/${config.MAX_PLAYERS}`);
     });
 
     socket.on('move', (movement) => {
