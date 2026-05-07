@@ -85,7 +85,6 @@
             padding-bottom: 2px;
         }
 
-        /* Panel Wyboru Broni */
         #weaponUI {
             position: absolute;
             bottom: 30px;
@@ -209,6 +208,9 @@
         let shakeAmount = 0;
         const MAP_SIZE = 2000;
 
+        // 1. BLOKADA MENU KONTEKSTOWEGO (PPM)
+        window.addEventListener('contextmenu', (e) => e.preventDefault());
+
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -272,8 +274,6 @@
         const keys = {};
         window.addEventListener('keydown', e => {
             keys[e.key.toLowerCase()] = true;
-            
-            // Zmiana broni
             let newWeapon = null;
             if (e.key === '1') newWeapon = 'pistol';
             if (e.key === '2') newWeapon = 'shotgun';
@@ -282,13 +282,15 @@
             if (newWeapon && isGameStarted) {
                 socket.emit('change_weapon', newWeapon);
                 document.querySelectorAll('.weapon-slot').forEach(el => el.classList.remove('active'));
-                document.getElementById(`slot-${newWeapon}`).classList.add('active');
+                const slot = document.getElementById(`slot-${newWeapon}`);
+                if(slot) slot.classList.add('active');
             }
         });
         window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
+        // 2. STRZELANIE TYLKO LPM (e.button === 0)
         window.onmousedown = (e) => {
-            if (!isGameStarted) return;
+            if (!isGameStarted || e.button !== 0) return;
             const myPlayer = players[socket.id];
             if (!myPlayer) return;
             const camX = canvas.width / 2 - myPlayer.x - 20;
@@ -367,11 +369,16 @@
             });
             ctx.globalAlpha = 1.0;
 
-            ctx.fillStyle = "yellow";
+            // 3. ANIMOWANE POCISKI (LASERY)
             bullets.forEach(b => {
+                ctx.strokeStyle = "yellow";
+                ctx.lineWidth = 3;
+                ctx.lineCap = "round";
                 ctx.beginPath();
-                ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.moveTo(b.x, b.y);
+                // Rysujemy linię o długości 15px w kierunku lotu
+                ctx.lineTo(b.x - b.vx * 1.5, b.y - b.vy * 1.5);
+                ctx.stroke();
             });
 
             for (let id in players) {
@@ -392,6 +399,7 @@
 
                 if (id === socket.id) {
                     ctx.strokeStyle = "white";
+                    ctx.lineWidth = 2;
                     ctx.strokeRect(p.x - 2, p.y - 2, 44, 44);
                 }
             }
