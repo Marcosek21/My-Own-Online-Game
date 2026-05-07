@@ -56,7 +56,7 @@
         }
         button:hover { background: #00b8e6; transform: scale(1.05); }
 
-        /* Interfejs w grze (HUD) */
+        /* HUD i UI w grze */
         #hud { 
             position: absolute; 
             top: 20px; 
@@ -85,6 +85,33 @@
             border-bottom: 1px solid rgba(255,255,255,0.1);
             padding-bottom: 2px;
         }
+
+        /* Minimapa i Legenda */
+        #minimapContainer {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #444;
+            border-radius: 8px;
+            padding: 8px;
+            z-index: 10;
+        }
+        #minimap {
+            width: 160px;
+            height: 160px;
+            background: #000;
+            display: block;
+            border: 1px solid #333;
+        }
+        #legend {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #ccc;
+        }
+        .leg-item { display: flex; align-items: center; margin: 3px 0; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+        
         h3 { margin: 0 0 10px 0; font-size: 16px; color: #00d4ff; text-align: center; }
     </style>
 </head>
@@ -110,6 +137,16 @@
         <div id="scoresList"></div>
     </div>
 
+    <div id="minimapContainer">
+        <canvas id="minimap" width="160" height="160"></canvas>
+        <div id="legend">
+            <div class="leg-item"><div class="dot" style="background:#2ecc71"></div> +40 HP (Apteczka)</div>
+            <div class="leg-item"><div class="dot" style="background:#00d4ff"></div> Speed Boost (7s)</div>
+            <div class="leg-item"><div class="dot" style="background:#ff0000"></div> Przeciwnik</div>
+            <div class="leg-item"><div class="dot" style="background:#ffff00"></div> Ty</div>
+        </div>
+    </div>
+
     <canvas id="gameCanvas"></canvas>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -117,6 +154,8 @@
         const socket = io();
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+        const miniCanvas = document.getElementById('minimap');
+        const miniCtx = miniCanvas.getContext('2d');
         
         const loginScreen = document.getElementById('loginScreen');
         const nickInput = document.getElementById('nickInput');
@@ -126,6 +165,8 @@
         let isGameStarted = false;
         let players = {};
         let bullets = [];
+        let powerups = [];
+        let walls = [];
         const MAP_SIZE = 2000;
 
         function resize() {
@@ -152,6 +193,8 @@
         socket.on('state', (state) => {
             players = state.players;
             bullets = state.bullets;
+            powerups = state.powerups;
+            walls = state.walls;
             updateLeaderboard();
         });
 
@@ -168,22 +211,18 @@
             `).join('');
         }
 
-        // STEROWANIE KLAWIATURĄ
+        // STEROWANIE
         const keys = {};
         window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
         window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
-        // JEDYNA OBSŁUGA STRZELANIA (Przeliczanie na World Space)
         window.onmousedown = (e) => {
             if (!isGameStarted) return;
             const myPlayer = players[socket.id];
             if (!myPlayer) return;
 
-            // Obliczamy kamerę dokładnie tak samo jak w funkcji draw()
             const camX = canvas.width / 2 - myPlayer.x - 20;
             const camY = canvas.height / 2 - myPlayer.y - 20;
-
-            // Pozycja kliknięcia w świecie = mysz - przesunięcie kamery
             const worldX = e.clientX - camX;
             const worldY = e.clientY - camY;
 
@@ -191,20 +230,47 @@
         };
 
         function updateMovement() {
-            const movement = { x: 0, y: 0 };
-            const speed = 5;
+    let dx = 0;
+    let dy = 0;
 
-            if (keys['w']) movement.y -= speed;
-            if (keys['s']) movement.y += speed;
-            if (keys['a']) movement.x -= speed;
-            if (keys['d']) movement.x += speed;
+    if (keys['w']) dy -= 1;
+    if (keys['s']) dy += 1;
+    if (keys['a']) dx -= 1;
+    if (keys['d']) dx += 1;
 
-            if (movement.x !== 0 || movement.y !== 0) {
-                socket.emit('move', movement);
+    if (dx !== 0 || dy !== 0) {
+        // Obliczamy długość wektora (hipotenuzę)
+        const distance = Math.hypot(dx, dy);
+        
+        // Normalizacja: dzielimy składowe przez długość, 
+        // aby wektor zawsze miał długość 1 (nawet na skosie)
+        const normalizedX = dx / distance;
+        const normalizedY = dy / distance;
+
+        socket.emit('move', { x: normalizedX, y: normalizedY });
+    }
+}
+
+        function drawMinimap() {
+            miniCtx.clearRect(0, 0, miniCanvas.width, miniCanvas.height);
+            const scale = miniCanvas.width / MAP_SIZE;
+
+            // Ściany na minimapie
+            miniCtx.fillStyle = "#444";
+            walls.forEach(w => {
+                miniCtx.fillRect(w.x * scale, w.y * scale, w.w * scale, w.h * scale);
+            });
+
+            // Gracze na minimapie
+            for (let id in players) {
+                const p = players[id];
+                miniCtx.fillStyle = id === socket.id ? "#ffff00" : "#ff0000";
+                miniCtx.beginPath();
+                miniCtx.arc(p.x * scale, p.y * scale, 3, 0, Math.PI * 2);
+                miniCtx.fill();
             }
         }
 
-        // RYSOWANIE
         function draw() {
             if (!isGameStarted) return;
 
@@ -214,7 +280,6 @@
                 return;
             }
 
-            // KAMERA: Centrowanie na graczu
             const camX = canvas.width / 2 - myPlayer.x - 20;
             const camY = canvas.height / 2 - myPlayer.y - 20;
 
@@ -223,14 +288,11 @@
             ctx.save();
             ctx.translate(camX, camY);
 
-            // 1. Tło i granice mapy
-            ctx.fillStyle = "#1a1a1a";
+            // 1. Tło i Siatka
+            ctx.fillStyle = "#151515";
             ctx.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
-
-            // Siatka pomocnicza
             ctx.beginPath();
-            ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
-            ctx.lineWidth = 1;
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
             for (let x = 0; x <= MAP_SIZE; x += 100) {
                 ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE);
             }
@@ -239,11 +301,29 @@
             }
             ctx.stroke();
 
-            ctx.strokeStyle = "#00d4ff";
-            ctx.lineWidth = 5;
-            ctx.strokeRect(0, 0, MAP_SIZE, MAP_SIZE);
+            // 2. Ściany
+            ctx.fillStyle = "#333";
+            ctx.strokeStyle = "#444";
+            ctx.lineWidth = 2;
+            walls.forEach(w => {
+                ctx.fillRect(w.x, w.y, w.w, w.h);
+                ctx.strokeRect(w.x, w.y, w.w, w.h);
+            });
 
-            // 2. Pociski
+            // 3. Power-upy
+            powerups.forEach(pu => {
+                ctx.beginPath();
+                ctx.fillStyle = pu.type === 'health' ? "#2ecc71" : "#00d4ff";
+                ctx.arc(pu.x, pu.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                // Poświata
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = ctx.fillStyle;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            });
+
+            // 4. Pociski
             ctx.fillStyle = "yellow";
             bullets.forEach(b => {
                 ctx.beginPath();
@@ -251,16 +331,20 @@
                 ctx.fill();
             });
 
-            // 3. Gracze
+            // 5. Gracze
             for (let id in players) {
                 const p = players[id];
 
-                // Postać
+                // Cień gracza
+                ctx.fillStyle = "rgba(0,0,0,0.2)";
+                ctx.fillRect(p.x + 3, p.y + 3, 40, 40);
+
+                // Kwadrat gracza
                 ctx.fillStyle = p.color;
                 ctx.fillRect(p.x, p.y, 40, 40);
 
                 // Pasek życia
-                ctx.fillStyle = "#333";
+                ctx.fillStyle = "#222";
                 ctx.fillRect(p.x, p.y - 12, 40, 6);
                 ctx.fillStyle = p.hp > 30 ? "#2ecc71" : "#e74c3c";
                 ctx.fillRect(p.x, p.y - 12, (p.hp / 100) * 40, 6);
@@ -269,9 +353,8 @@
                 ctx.fillStyle = "white";
                 ctx.font = "bold 13px sans-serif";
                 ctx.textAlign = "center";
-                ctx.fillText(p.name, p.x + 20, p.y - 20);
+                ctx.fillText(p.name, p.x + 20, p.y - 22);
 
-                // Obramowanie lokalnego gracza
                 if (id === socket.id) {
                     ctx.strokeStyle = "white";
                     ctx.lineWidth = 2;
@@ -281,6 +364,7 @@
 
             ctx.restore();
 
+            drawMinimap();
             updateMovement();
             requestAnimationFrame(draw);
         }
