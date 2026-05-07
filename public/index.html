@@ -2,33 +2,91 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Moja Gra Online</title>
+    <title>Moja Gra Online - Canvas</title>
     <style>
-        body { font-family: sans-serif; background: #222; color: white; text-align: center; }
-        #status { color: #0f0; }
+        body { margin: 0; background: #111; overflow: hidden; color: white; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
     </style>
 </head>
 <body>
-    <h1>Moja Gra Online</h1>
-    <p>Status połączenia: <span id="status">Łączenie...</span></p>
-    <div id="logs"></div>
+    <div id="ui">Ruch: <b>WSAD</b> | Grasz jako: <span id="myName">...</span></div>
+    <canvas id="gameCanvas"></canvas>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io();
-        const statusElement = document.getElementById('status');
-        const logs = document.getElementById('logs');
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const myNameSpan = document.getElementById('myName');
 
-        socket.on('connect', () => {
-    statusElement.innerText = 'POŁĄCZONO!';
-    socket.emit('join_game', { name: 'Marco' }); // Wysyłamy unikalny sygnał
-});
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
 
-        socket.on('chat message', (msg) => {
-            const item = document.createElement('p');
-            item.textContent = msg;
-            logs.appendChild(item);
+        let players = {};
+        const myName = "Marco_" + Math.floor(Math.random() * 100);
+        myNameSpan.innerText = myName;
+
+        // Powiadomienie serwera o dołączeniu
+        socket.emit('join_game', { name: myName });
+
+        // Odbieranie stanu od serwera
+        socket.on('state', (serverPlayers) => {
+            players = serverPlayers;
         });
+
+        // Obsługa klawiatury
+        const keys = {};
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        function update() {
+            const movement = { x: 0, y: 0 };
+            const speed = 4;
+
+            if (keys['w']) movement.y -= speed;
+            if (keys['s']) movement.y += speed;
+            if (keys['a']) movement.x -= speed;
+            if (keys['d']) movement.x += speed;
+
+            // Wysyłamy ruch tylko jeśli faktycznie się ruszamy
+            if (movement.x !== 0 || movement.y !== 0) {
+                socket.emit('move', movement);
+            }
+        }
+
+        function draw() {
+            // Czyścimy ekran
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Rysujemy każdego gracza
+            for (let id in players) {
+                const p = players[id];
+                
+                // Rysujemy kwadrat
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, 40, 40);
+
+                // Rysujemy nick nad głową
+                ctx.fillStyle = "white";
+                ctx.font = "14px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(p.name, p.x + 20, p.y - 10);
+
+                // Wyróżnienie mojego gracza obramowaniem
+                if (id === socket.id) {
+                    ctx.strokeStyle = "white";
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(p.x, p.y, 40, 40);
+                }
+            }
+
+            update(); // Sprawdź klawisze
+            requestAnimationFrame(draw); // Następna klatka animacji
+        }
+
+        // Start pętli rysowania
+        draw();
     </script>
 </body>
 </html>

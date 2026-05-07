@@ -14,30 +14,46 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Zarządzanie połączeniami graczy
+// Obiekt przechowujący stan wszystkich graczy
+const players = {};
+
 io.on('connection', (socket) => {
-    // 1. Sprawdzanie botów/nagłówków
-    if (!socket.handshake.headers.host) {
-        return socket.disconnect();
-    }
+    console.log(`[POLĄCZENIE] Nowy socket: ${socket.id}`);
 
-    console.log(`[GRA] Połączono socket: ${socket.id}`);
-
-    // 2. Obsługa zdarzenia join_game - TERAZ JEST WEWNĄTRZ KLAMER
     socket.on('join_game', (data) => {
-        console.log(`[GRA] Gracz ${data.name} faktycznie wszedł do gry!`);
+        // Inicjalizacja gracza z losowym kolorem i pozycją startową
+        players[socket.id] = {
+            x: 100 + Math.random() * 400,
+            y: 100 + Math.random() * 400,
+            color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+            name: data.name || 'Bezimienny'
+        };
+        console.log(`[GRA] ${players[socket.id].name} wszedł do gry.`);
         
-        // Możemy odesłać potwierdzenie do gracza
-        socket.emit('welcome', { message: `Witaj w grze, ${data.name}!` });
+        // Rozsyłamy aktualny stan świata do WSZYSTKICH
+        io.emit('state', players);
     });
 
-    // 3. Obsługa rozłączenia
+    // Obsługa ruchu wysyłanego przez klienta
+    socket.on('move', (movement) => {
+        if (players[socket.id]) {
+            players[socket.id].x += movement.x;
+            players[socket.id].y += movement.y;
+            // Bardzo ważne: wysyłamy aktualizację do wszystkich
+            io.emit('state', players);
+        }
+    });
+
     socket.on('disconnect', () => {
-        console.log(`[GRA] Gracz rozłączony: ${socket.id}`);
+        if (players[socket.id]) {
+            console.log(`[GRA] ${players[socket.id].name} opuścił grę.`);
+            delete players[socket.id];
+            io.emit('state', players); // Informujemy innych o zniknięciu gracza
+        }
     });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Serwer nasłuchuje na porcie ${PORT}`);
+    console.log(`Serwer gry działa na porcie ${PORT}`);
 });
