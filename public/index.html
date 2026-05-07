@@ -56,7 +56,6 @@
         }
         button:hover { background: #00b8e6; transform: scale(1.05); }
 
-        /* HUD i UI w grze */
         #hud { 
             position: absolute; 
             top: 20px; 
@@ -86,7 +85,6 @@
             padding-bottom: 2px;
         }
 
-        /* Minimapa i Legenda */
         #minimapContainer {
             position: absolute;
             bottom: 20px;
@@ -167,6 +165,9 @@
         let bullets = [];
         let powerups = [];
         let walls = [];
+        let particles = [];
+        let lastMyHp = 100;
+        let shakeAmount = 0;
         const MAP_SIZE = 2000;
 
         function resize() {
@@ -175,6 +176,21 @@
         }
         window.addEventListener('resize', resize);
         resize();
+
+        // SYSTEM CZĄSTECZEK
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 12; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 1.0,
+                    color: color,
+                    size: Math.random() * 4 + 2
+                });
+            }
+        }
 
         // LOGOWANIE
         startButton.onclick = () => {
@@ -191,6 +207,17 @@
 
         // ODBIERANIE STANU
         socket.on('state', (state) => {
+            const myPlayer = state.players[socket.id];
+            
+            // Efekt trzęsienia ekranu i cząsteczek przy stracie HP
+            if (myPlayer) {
+                if (myPlayer.hp < lastMyHp) {
+                    shakeAmount = 12;
+                    createExplosion(myPlayer.x + 20, myPlayer.y + 20, myPlayer.color);
+                }
+                lastMyHp = myPlayer.hp;
+            }
+
             players = state.players;
             bullets = state.bullets;
             powerups = state.powerups;
@@ -230,38 +257,28 @@
         };
 
         function updateMovement() {
-    let dx = 0;
-    let dy = 0;
+            let dx = 0;
+            let dy = 0;
+            if (keys['w']) dy -= 1;
+            if (keys['s']) dy += 1;
+            if (keys['a']) dx -= 1;
+            if (keys['d']) dx += 1;
 
-    if (keys['w']) dy -= 1;
-    if (keys['s']) dy += 1;
-    if (keys['a']) dx -= 1;
-    if (keys['d']) dx += 1;
-
-    if (dx !== 0 || dy !== 0) {
-        // Obliczamy długość wektora (hipotenuzę)
-        const distance = Math.hypot(dx, dy);
-        
-        // Normalizacja: dzielimy składowe przez długość, 
-        // aby wektor zawsze miał długość 1 (nawet na skosie)
-        const normalizedX = dx / distance;
-        const normalizedY = dy / distance;
-
-        socket.emit('move', { x: normalizedX, y: normalizedY });
-    }
-}
+            if (dx !== 0 || dy !== 0) {
+                const distance = Math.hypot(dx, dy);
+                socket.emit('move', { x: dx / distance, y: dy / distance });
+            }
+        }
 
         function drawMinimap() {
             miniCtx.clearRect(0, 0, miniCanvas.width, miniCanvas.height);
             const scale = miniCanvas.width / MAP_SIZE;
 
-            // Ściany na minimapie
             miniCtx.fillStyle = "#444";
             walls.forEach(w => {
                 miniCtx.fillRect(w.x * scale, w.y * scale, w.w * scale, w.h * scale);
             });
 
-            // Gracze na minimapie
             for (let id in players) {
                 const p = players[id];
                 miniCtx.fillStyle = id === socket.id ? "#ffff00" : "#ff0000";
@@ -280,15 +297,22 @@
                 return;
             }
 
-            const camX = canvas.width / 2 - myPlayer.x - 20;
-            const camY = canvas.height / 2 - myPlayer.y - 20;
+            // KAMERA + SCREEN SHAKE
+            let camX = canvas.width / 2 - myPlayer.x - 20;
+            let camY = canvas.height / 2 - myPlayer.y - 20;
+
+            if (shakeAmount > 0) {
+                camX += (Math.random() - 0.5) * shakeAmount;
+                camY += (Math.random() - 0.5) * shakeAmount;
+                shakeAmount *= 0.9;
+                if (shakeAmount < 0.2) shakeAmount = 0;
+            }
 
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
             ctx.save();
             ctx.translate(camX, camY);
 
-            // 1. Tło i Siatka
+            // 1. Tło
             ctx.fillStyle = "#151515";
             ctx.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
             ctx.beginPath();
@@ -303,12 +327,7 @@
 
             // 2. Ściany
             ctx.fillStyle = "#333";
-            ctx.strokeStyle = "#444";
-            ctx.lineWidth = 2;
-            walls.forEach(w => {
-                ctx.fillRect(w.x, w.y, w.w, w.h);
-                ctx.strokeRect(w.x, w.y, w.w, w.h);
-            });
+            walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
             // 3. Power-upy
             powerups.forEach(pu => {
@@ -316,14 +335,21 @@
                 ctx.fillStyle = pu.type === 'health' ? "#2ecc71" : "#00d4ff";
                 ctx.arc(pu.x, pu.y, 10, 0, Math.PI * 2);
                 ctx.fill();
-                // Poświata
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = ctx.fillStyle;
-                ctx.stroke();
-                ctx.shadowBlur = 0;
             });
 
-            // 4. Pociski
+            // 4. Cząsteczki
+            particles.forEach((p, index) => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(index, 1);
+            });
+            ctx.globalAlpha = 1.0;
+
+            // 5. Pociski
             ctx.fillStyle = "yellow";
             bullets.forEach(b => {
                 ctx.beginPath();
@@ -331,39 +357,34 @@
                 ctx.fill();
             });
 
-            // 5. Gracze
+            // 6. Gracze
             for (let id in players) {
                 const p = players[id];
-
-                // Cień gracza
-                ctx.fillStyle = "rgba(0,0,0,0.2)";
-                ctx.fillRect(p.x + 3, p.y + 3, 40, 40);
-
-                // Kwadrat gracza
-                ctx.fillStyle = p.color;
+                
+                // HIT FLASH: błyśnięcie na biało jeśli p.lastHit jest świeże (100ms)
+                const isFlashing = p.lastHit && (Date.now() - p.lastHit < 100);
+                ctx.fillStyle = isFlashing ? "white" : p.color;
+                
                 ctx.fillRect(p.x, p.y, 40, 40);
 
-                // Pasek życia
+                // Paski HP i Nick
                 ctx.fillStyle = "#222";
                 ctx.fillRect(p.x, p.y - 12, 40, 6);
                 ctx.fillStyle = p.hp > 30 ? "#2ecc71" : "#e74c3c";
                 ctx.fillRect(p.x, p.y - 12, (p.hp / 100) * 40, 6);
 
-                // Nick
                 ctx.fillStyle = "white";
                 ctx.font = "bold 13px sans-serif";
                 ctx.textAlign = "center";
-                ctx.fillText(p.name, p.x + 20, p.y - 22);
+                ctx.fillText(p.name, p.x + 20, p.y - 20);
 
                 if (id === socket.id) {
                     ctx.strokeStyle = "white";
-                    ctx.lineWidth = 2;
                     ctx.strokeRect(p.x - 2, p.y - 2, 44, 44);
                 }
             }
 
             ctx.restore();
-
             drawMinimap();
             updateMovement();
             requestAnimationFrame(draw);
