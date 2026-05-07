@@ -6,6 +6,56 @@ const path = require('path');
 const app = express();
 const server = http.createServer(app);
 
+// STAN GRY - Zmienne globalne serwera
+const players = {};
+const bullets = [];
+const MAP_SIZE = 2000;
+
+// --- FUNKCJE POMOCNICZE ---
+
+const getDist = (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1);
+
+function getSafeSpawn() {
+    let position = { x: Math.random() * (MAP_SIZE - 100) + 50, y: Math.random() * (MAP_SIZE - 100) + 50 };
+    let safe = false;
+    let attempts = 0;
+
+    while (!safe && attempts < 50) {
+        safe = true;
+        for (let id in players) {
+            if (getDist(position.x, position.y, players[id].x, players[id].y) < 300) {
+                safe = false;
+                position = { x: Math.random() * (MAP_SIZE - 100) + 50, y: Math.random() * (MAP_SIZE - 100) + 50 };
+                break;
+            }
+        }
+        attempts++;
+    }
+    return position;
+}
+
+function getUniqueColor() {
+    let color;
+    let isTooSimilar = true;
+    let attempts = 0;
+
+    while (isTooSimilar && attempts < 30) {
+        const hue = Math.floor(Math.random() * 360);
+        color = `hsl(${hue}, 70%, 50%)`;
+        isTooSimilar = Object.values(players).some(p => {
+            // Wyciągamy wartość hue z ciągu hsl(...)
+            const match = p.color.match(/\d+/);
+            if (!match) return false;
+            const existingHue = parseInt(match[0]);
+            return Math.abs(existingHue - hue) < 25; 
+        });
+        attempts++;
+    }
+    return color;
+}
+
+// --- INICJALIZACJA SOCKET.IO ---
+
 const io = new Server(server, {
     cors: {
         origin: "https://gierka.marcoschneider.pl", 
@@ -15,12 +65,8 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// STAN GRY
-const players = {};
-const bullets = [];
-const MAP_SIZE = 2000; // Rozmiar wirtualnej mapy
-
 // --- PĘTLA FIZYKI (60 FPS) ---
+
 setInterval(() => {
     // 1. Aktualizacja pocisków
     for (let i = bullets.length - 1; i >= 0; i--) {
@@ -28,95 +74,86 @@ setInterval(() => {
         b.x += b.vx;
         b.y += b.vy;
 
-        // Usuwanie pocisków poza granicami mapy
         if (b.x < 0 || b.x > MAP_SIZE || b.y < 0 || b.y > MAP_SIZE) {
             bullets.splice(i, 1);
             continue;
         }
 
-        // 2. Sprawdzanie kolizji pocisków z graczami
+        // 2. Sprawdzanie kolizji
         for (let id in players) {
-            if (id === b.owner) continue; // Nie trafiaj samego siebie
+            if (id === b.owner) continue;
             
             const p = players[id];
-            // Kolizja: pocisk (punkt) wewnątrz kwadratu gracza (40x40)
             if (b.x > p.x && b.x < p.x + 40 && b.y > p.y && b.y < p.y + 40) {
-                p.hp -= 20; // Zadaj obrażenia
-                bullets.splice(i, 1); // Usuń pocisk
+                p.hp -= 20;
+                bullets.splice(i, 1);
 
-                // Sprawdzenie czy gracz zginął
                 if (p.hp <= 0) {
-                    console.log(`[KILL] ${players[b.owner]?.name} zabił ${p.name}`);
+                    console.log(`[KILL] ${players[b.owner]?.name || 'Nieznany'} zabił ${p.name}`);
+                    if (players[b.owner]) players[b.owner].score += 1;
                     
-                    // Przyznaj punkt strzelcowi (jeśli nadal jest w grze)
-                    if (players[b.owner]) {
-                        players[b.owner].score += 1;
-                    }
-                    
-                    // Reset gracza (respawn)
+                    // Bezpieczny Respawn
+                    const newPos = getSafeSpawn();
                     p.hp = 100;
-                    p.x = Math.random() * (MAP_SIZE - 100) + 50;
-                    p.y = Math.random() * (MAP_SIZE - 100) + 50;
+                    p.x = newPos.x;
+                    p.y = newPos.y;
                 }
                 break; 
             }
         }
     }
 
-    // 3. Rozsyłanie stanu do wszystkich klientów
     io.emit('state', { players, bullets });
 }, 1000 / 60);
 
-// --- OBSŁUGA POŁĄCZEŃ SOCKET.IO ---
-io.on('connection', (socket) => {
-    console.log(`[POŁĄCZENIE] Nowy socket: ${socket.id}`);
+// --- OBSŁUGA POŁĄCZEŃ ---
 
-    // Dołączenie gracza do gry
+io.on('connection', (socket) => {
+    console.log(`[POŁĄCZENIE] ${socket.id}`);
+
     socket.on('join_game', (data) => {
+        const spawn = getSafeSpawn();
         players[socket.id] = {
-            x: Math.random() * 500 + 100,
-            y: Math.random() * 500 + 100,
-            color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+            x: spawn.x,
+            y: spawn.y,
+            color: getUniqueColor(),
             name: data.name ? data.name.substring(0, 12) : 'Bezimienny',
             hp: 100,
             score: 0
         };
-        console.log(`[GRA] ${players[socket.id].name} dołączył do aren.`);
     });
 
-    // Ruch gracza z blokadą granic (Clamping)
     socket.on('move', (movement) => {
         const p = players[socket.id];
         if (p) {
-            // Przesuwamy i od razu sprawdzamy czy nie wychodzi poza mapę
             p.x = Math.max(0, Math.min(MAP_SIZE - 40, p.x + movement.x));
             p.y = Math.max(0, Math.min(MAP_SIZE - 40, p.y + movement.y));
         }
     });
 
-    // Strzelanie
     socket.on('shoot', (target) => {
         const p = players[socket.id];
         if (p) {
-            // Oblicz kąt w stronę kliknięcia (celujemy ze środka kwadratu)
             const centerX = p.x + 20;
             const centerY = p.y + 20;
-            const angle = Math.atan2(target.y - centerY, target.x - centerX);
             
+            // Obliczamy kąt i prędkość lokalnie dla każdego strzału
+            const angle = Math.atan2(target.y - centerY, target.x - centerX);
+            const bulletSpeed = 14;
+
             bullets.push({
                 x: centerX,
                 y: centerY,
-                vx: Math.cos(angle) * 12,
-                vy: Math.sin(angle) * 12,
+                vx: Math.cos(angle) * bulletSpeed,
+                vy: Math.sin(angle) * bulletSpeed,
                 owner: socket.id
             });
         }
     });
 
-    // Rozłączenie
     socket.on('disconnect', () => {
         if (players[socket.id]) {
-            console.log(`[GRA] ${players[socket.id].name} wyszedł z gry.`);
+            console.log(`[GRA] ${players[socket.id].name} wyszedł.`);
             delete players[socket.id];
         }
     });
@@ -124,5 +161,5 @@ io.on('connection', (socket) => {
 
 const PORT = 3000;
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`SERWER URUCHOMIONY: http://localhost:${PORT}`);
+    console.log(`SERWER URUCHOMIONY NA PORCIE ${PORT}`);
 });

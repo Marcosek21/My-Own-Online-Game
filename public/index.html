@@ -63,6 +63,7 @@
             left: 20px; 
             pointer-events: none; 
             text-shadow: 1px 1px 2px black;
+            z-index: 10;
         }
         #leaderboard {
             position: absolute; 
@@ -74,6 +75,7 @@
             min-width: 180px; 
             border: 1px solid rgba(255, 255, 255, 0.2);
             backdrop-filter: blur(5px);
+            z-index: 10;
         }
         .score-row { 
             display: flex; 
@@ -124,8 +126,8 @@
         let isGameStarted = false;
         let players = {};
         let bullets = [];
+        const MAP_SIZE = 2000;
 
-        // Dopasowanie canvasu
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -146,7 +148,7 @@
             }
         };
 
-        // ODBIERANIE STANU Z SERWERA
+        // ODBIERANIE STANU
         socket.on('state', (state) => {
             players = state.players;
             bullets = state.bullets;
@@ -166,15 +168,27 @@
             `).join('');
         }
 
-        // STEROWANIE
+        // STEROWANIE KLAWIATURĄ
         const keys = {};
         window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
         window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
-        window.addEventListener('mousedown', (e) => {
+        // JEDYNA OBSŁUGA STRZELANIA (Przeliczanie na World Space)
+        window.onmousedown = (e) => {
             if (!isGameStarted) return;
-            socket.emit('shoot', { x: e.clientX, y: e.clientY });
-        });
+            const myPlayer = players[socket.id];
+            if (!myPlayer) return;
+
+            // Obliczamy kamerę dokładnie tak samo jak w funkcji draw()
+            const camX = canvas.width / 2 - myPlayer.x - 20;
+            const camY = canvas.height / 2 - myPlayer.y - 20;
+
+            // Pozycja kliknięcia w świecie = mysz - przesunięcie kamery
+            const worldX = e.clientX - camX;
+            const worldY = e.clientY - camY;
+
+            socket.emit('shoot', { x: worldX, y: worldY });
+        };
 
         function updateMovement() {
             const movement = { x: 0, y: 0 };
@@ -194,9 +208,42 @@
         function draw() {
             if (!isGameStarted) return;
 
+            const myPlayer = players[socket.id];
+            if (!myPlayer) {
+                requestAnimationFrame(draw);
+                return;
+            }
+
+            // KAMERA: Centrowanie na graczu
+            const camX = canvas.width / 2 - myPlayer.x - 20;
+            const camY = canvas.height / 2 - myPlayer.y - 20;
+
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. Pociski
+            ctx.save();
+            ctx.translate(camX, camY);
+
+            // 1. Tło i granice mapy
+            ctx.fillStyle = "#1a1a1a";
+            ctx.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
+
+            // Siatka pomocnicza
+            ctx.beginPath();
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= MAP_SIZE; x += 100) {
+                ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE);
+            }
+            for (let y = 0; y <= MAP_SIZE; y += 100) {
+                ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y);
+            }
+            ctx.stroke();
+
+            ctx.strokeStyle = "#00d4ff";
+            ctx.lineWidth = 5;
+            ctx.strokeRect(0, 0, MAP_SIZE, MAP_SIZE);
+
+            // 2. Pociski
             ctx.fillStyle = "yellow";
             bullets.forEach(b => {
                 ctx.beginPath();
@@ -204,37 +251,35 @@
                 ctx.fill();
             });
 
-            // 2. Gracze
+            // 3. Gracze
             for (let id in players) {
                 const p = players[id];
 
-                // Kwadrat gracza
+                // Postać
                 ctx.fillStyle = p.color;
                 ctx.fillRect(p.x, p.y, 40, 40);
 
-                // Pasek życia (HP)
-                const hpWidth = 40;
-                const hpHeight = 6;
+                // Pasek życia
                 ctx.fillStyle = "#333";
-                ctx.fillRect(p.x, p.y - 12, hpWidth, hpHeight); // Tło paska
-                
-                const currentHpWidth = (p.hp / 100) * hpWidth;
-                ctx.fillStyle = p.hp > 40 ? "#2ecc71" : "#e74c3c"; // Zielony lub czerwony
-                ctx.fillRect(p.x, p.y - 12, currentHpWidth, hpHeight);
+                ctx.fillRect(p.x, p.y - 12, 40, 6);
+                ctx.fillStyle = p.hp > 30 ? "#2ecc71" : "#e74c3c";
+                ctx.fillRect(p.x, p.y - 12, (p.hp / 100) * 40, 6);
 
-                // Nick i wynik
+                // Nick
                 ctx.fillStyle = "white";
                 ctx.font = "bold 13px sans-serif";
                 ctx.textAlign = "center";
-                ctx.fillText(`${p.name}`, p.x + 20, p.y - 20);
+                ctx.fillText(p.name, p.x + 20, p.y - 20);
 
-                // Obramowanie Twojej postaci
+                // Obramowanie lokalnego gracza
                 if (id === socket.id) {
                     ctx.strokeStyle = "white";
                     ctx.lineWidth = 2;
                     ctx.strokeRect(p.x - 2, p.y - 2, 44, 44);
                 }
             }
+
+            ctx.restore();
 
             updateMovement();
             requestAnimationFrame(draw);
