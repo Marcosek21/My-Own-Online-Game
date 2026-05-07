@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Moja Gra Online</title>
+    <style>
+        body { font-family: sans-serif; background: #222; color: white; text-align: center; }
+        #status { color: #0f0; }
+    </style>
+</head>
+<body>
+    <h1>Moja Gra Online</h1>
+    <p>Status połączenia: <span id="status">Łączenie...</span></p>
+    <div id="logs"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const statusElement = document.getElementById('status');
+        const logs = document.getElementById('logs');
+
+        socket.on('connect', () => {
+    statusElement.innerText = 'POŁĄCZONO!';
+    socket.emit('join_game', { name: 'Marco' }); // Wysyłamy unikalny sygnał
+});
+
+        socket.on('chat message', (msg) => {
+            const item = document.createElement('p');
+            item.textContent = msg;
+            logs.appendChild(item);
+        });
+    </script>
+</body>
+</html>
