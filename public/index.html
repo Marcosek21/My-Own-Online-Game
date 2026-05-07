@@ -85,6 +85,38 @@
             padding-bottom: 2px;
         }
 
+        /* Panel Wyboru Broni */
+        #weaponUI {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            background: rgba(0,0,0,0.7);
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid #444;
+            backdrop-filter: blur(10px);
+            z-index: 20;
+        }
+        .weapon-slot {
+            padding: 8px 15px;
+            background: #222;
+            border: 2px solid #444;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: bold;
+            color: #666;
+            transition: all 0.2s;
+        }
+        .weapon-slot.active {
+            border-color: #00d4ff;
+            color: white;
+            background: #333;
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+        }
+
         #minimapContainer {
             position: absolute;
             bottom: 20px;
@@ -127,12 +159,19 @@
 
     <div id="hud">
         Ruch: <b>WSAD</b><br>
-        Strzał: <b>LPM</b>
+        Strzał: <b>LPM</b><br>
+        Broń: <b>1, 2, 3</b>
     </div>
 
     <div id="leaderboard">
         <h3>RANKING</h3>
         <div id="scoresList"></div>
+    </div>
+
+    <div id="weaponUI">
+        <div id="slot-pistol" class="weapon-slot active">1: Pistolet</div>
+        <div id="slot-shotgun" class="weapon-slot">2: Shotgun</div>
+        <div id="slot-sniper" class="weapon-slot">3: Snajperka</div>
     </div>
 
     <div id="minimapContainer">
@@ -177,12 +216,10 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // SYSTEM CZĄSTECZEK
         function createExplosion(x, y, color) {
             for (let i = 0; i < 12; i++) {
                 particles.push({
-                    x: x,
-                    y: y,
+                    x: x, y: y,
                     vx: (Math.random() - 0.5) * 8,
                     vy: (Math.random() - 0.5) * 8,
                     life: 1.0,
@@ -192,7 +229,6 @@
             }
         }
 
-        // LOGOWANIE
         startButton.onclick = () => {
             const name = nickInput.value.trim();
             if (name.length >= 2) {
@@ -205,11 +241,8 @@
             }
         };
 
-        // ODBIERANIE STANU
         socket.on('state', (state) => {
             const myPlayer = state.players[socket.id];
-            
-            // Efekt trzęsienia ekranu i cząsteczek przy stracie HP
             if (myPlayer) {
                 if (myPlayer.hp < lastMyHp) {
                     shakeAmount = 12;
@@ -217,7 +250,6 @@
                 }
                 lastMyHp = myPlayer.hp;
             }
-
             players = state.players;
             bullets = state.bullets;
             powerups = state.powerups;
@@ -229,7 +261,6 @@
             const sorted = Object.values(players)
                 .sort((a, b) => b.score - a.score)
                 .slice(0, 5);
-            
             scoresList.innerHTML = sorted.map(p => `
                 <div class="score-row">
                     <span>${p.name}</span>
@@ -238,32 +269,39 @@
             `).join('');
         }
 
-        // STEROWANIE
         const keys = {};
-        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keydown', e => {
+            keys[e.key.toLowerCase()] = true;
+            
+            // Zmiana broni
+            let newWeapon = null;
+            if (e.key === '1') newWeapon = 'pistol';
+            if (e.key === '2') newWeapon = 'shotgun';
+            if (e.key === '3') newWeapon = 'sniper';
+
+            if (newWeapon && isGameStarted) {
+                socket.emit('change_weapon', newWeapon);
+                document.querySelectorAll('.weapon-slot').forEach(el => el.classList.remove('active'));
+                document.getElementById(`slot-${newWeapon}`).classList.add('active');
+            }
+        });
         window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
         window.onmousedown = (e) => {
             if (!isGameStarted) return;
             const myPlayer = players[socket.id];
             if (!myPlayer) return;
-
             const camX = canvas.width / 2 - myPlayer.x - 20;
             const camY = canvas.height / 2 - myPlayer.y - 20;
-            const worldX = e.clientX - camX;
-            const worldY = e.clientY - camY;
-
-            socket.emit('shoot', { x: worldX, y: worldY });
+            socket.emit('shoot', { x: e.clientX - camX, y: e.clientY - camY });
         };
 
         function updateMovement() {
-            let dx = 0;
-            let dy = 0;
+            let dx = 0, dy = 0;
             if (keys['w']) dy -= 1;
             if (keys['s']) dy += 1;
             if (keys['a']) dx -= 1;
             if (keys['d']) dx += 1;
-
             if (dx !== 0 || dy !== 0) {
                 const distance = Math.hypot(dx, dy);
                 socket.emit('move', { x: dx / distance, y: dy / distance });
@@ -273,12 +311,8 @@
         function drawMinimap() {
             miniCtx.clearRect(0, 0, miniCanvas.width, miniCanvas.height);
             const scale = miniCanvas.width / MAP_SIZE;
-
             miniCtx.fillStyle = "#444";
-            walls.forEach(w => {
-                miniCtx.fillRect(w.x * scale, w.y * scale, w.w * scale, w.h * scale);
-            });
-
+            walls.forEach(w => miniCtx.fillRect(w.x * scale, w.y * scale, w.w * scale, w.h * scale));
             for (let id in players) {
                 const p = players[id];
                 miniCtx.fillStyle = id === socket.id ? "#ffff00" : "#ff0000";
@@ -290,17 +324,11 @@
 
         function draw() {
             if (!isGameStarted) return;
-
             const myPlayer = players[socket.id];
-            if (!myPlayer) {
-                requestAnimationFrame(draw);
-                return;
-            }
+            if (!myPlayer) { requestAnimationFrame(draw); return; }
 
-            // KAMERA + SCREEN SHAKE
             let camX = canvas.width / 2 - myPlayer.x - 20;
             let camY = canvas.height / 2 - myPlayer.y - 20;
-
             if (shakeAmount > 0) {
                 camX += (Math.random() - 0.5) * shakeAmount;
                 camY += (Math.random() - 0.5) * shakeAmount;
@@ -312,24 +340,17 @@
             ctx.save();
             ctx.translate(camX, camY);
 
-            // 1. Tło
             ctx.fillStyle = "#151515";
             ctx.fillRect(0, 0, MAP_SIZE, MAP_SIZE);
             ctx.beginPath();
             ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
-            for (let x = 0; x <= MAP_SIZE; x += 100) {
-                ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE);
-            }
-            for (let y = 0; y <= MAP_SIZE; y += 100) {
-                ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y);
-            }
+            for (let x = 0; x <= MAP_SIZE; x += 100) { ctx.moveTo(x, 0); ctx.lineTo(x, MAP_SIZE); }
+            for (let y = 0; y <= MAP_SIZE; y += 100) { ctx.moveTo(0, y); ctx.lineTo(MAP_SIZE, y); }
             ctx.stroke();
 
-            // 2. Ściany
             ctx.fillStyle = "#333";
             walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
 
-            // 3. Power-upy
             powerups.forEach(pu => {
                 ctx.beginPath();
                 ctx.fillStyle = pu.type === 'health' ? "#2ecc71" : "#00d4ff";
@@ -337,19 +358,15 @@
                 ctx.fill();
             });
 
-            // 4. Cząsteczki
             particles.forEach((p, index) => {
                 ctx.globalAlpha = p.life;
                 ctx.fillStyle = p.color;
                 ctx.fillRect(p.x, p.y, p.size, p.size);
-                p.x += p.vx;
-                p.y += p.vy;
-                p.life -= 0.02;
+                p.x += p.vx; p.y += p.vy; p.life -= 0.02;
                 if (p.life <= 0) particles.splice(index, 1);
             });
             ctx.globalAlpha = 1.0;
 
-            // 5. Pociski
             ctx.fillStyle = "yellow";
             bullets.forEach(b => {
                 ctx.beginPath();
@@ -357,17 +374,12 @@
                 ctx.fill();
             });
 
-            // 6. Gracze
             for (let id in players) {
                 const p = players[id];
-                
-                // HIT FLASH: błyśnięcie na biało jeśli p.lastHit jest świeże (100ms)
                 const isFlashing = p.lastHit && (Date.now() - p.lastHit < 100);
                 ctx.fillStyle = isFlashing ? "white" : p.color;
-                
                 ctx.fillRect(p.x, p.y, 40, 40);
 
-                // Paski HP i Nick
                 ctx.fillStyle = "#222";
                 ctx.fillRect(p.x, p.y - 12, 40, 6);
                 ctx.fillStyle = p.hp > 30 ? "#2ecc71" : "#e74c3c";
